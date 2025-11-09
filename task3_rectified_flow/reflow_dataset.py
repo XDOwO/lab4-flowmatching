@@ -57,7 +57,7 @@ class ReflowDataset(torch.utils.data.Dataset):
         """
         # Load x_0 and z_1
         x_0 = torch.load(self.reflow_data_path / f"{idx:06d}_x0.pt")
-        z_1 = torch.load(self.reflow_data_path / f"{idx:06d}_x1.pt")
+        z_1 = torch.load(self.reflow_data_path / f"{idx:06d}_z1.pt")
 
         if self.use_cfg:
             label = torch.load(self.reflow_data_path / f"{idx:06d}_label.pt")
