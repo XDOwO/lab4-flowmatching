@@ -92,13 +92,17 @@ class FlowMatching(nn.Module):
 
         ######## TODO ########
         # DO NOT change the code outside this part.
-        # Implement the CFM objective.
+        # Implement the CFM objective.        
+        xt = self.fm_scheduler.compute_psi_t(x1, t, x0)
+
         if class_label is not None:
-            model_out = self.network(x1, t, class_label=class_label)
+            model_out = self.network(xt, t, class_label=class_label)
         else:
-            model_out = self.network(x1, t)
-        x1 = (model_out - (x1 - x0)) ** 2
-        loss = x1.mean()
+            model_out = self.network(xt, t)
+
+        target = x1 - x0
+
+        loss = F.mse_loss(model_out, target)
         ######################
 
         return loss
