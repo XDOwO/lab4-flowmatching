@@ -47,7 +47,7 @@ class FMScheduler(nn.Module):
         # DO NOT change the code outside this part.
         # compute psi_t(x)
 
-        psi_t = x1
+        psi_t = t*x1 + (1-t)*x
         ######################
 
         return psi_t
@@ -61,7 +61,7 @@ class FMScheduler(nn.Module):
         ######## TODO ########
         # DO NOT change the code outside this part.
         # implement each step of the first-order Euler method.
-        x_next = xt
+        x_next = xt + dt * vt
         ######################
 
         return x_next
@@ -97,7 +97,7 @@ class FlowMatching(nn.Module):
             model_out = self.network(x1, t, class_label=class_label)
         else:
             model_out = self.network(x1, t)
-
+        x1 = (model_out - (x1 - x0)) ** 2
         loss = x1.mean()
         ######################
 
@@ -143,7 +143,20 @@ class FlowMatching(nn.Module):
             ######## TODO ########
             # Complete the sampling loop
 
-            xt = self.fm_scheduler.step(xt, torch.zeros_like(xt), torch.zeros_like(t))
+            if do_classifier_free_guidance:
+                uncond = self.network(xt, t)
+                cond = self.network(xt, t, class_label=class_label)
+                v = uncond + guidance_scale * (cond - uncond)
+            else:
+                if class_label is not None:
+                    v = self.network(xt, t, class_label=class_label)
+                else:
+                    v = self.network(xt, t)
+
+            dt = t_next - t
+            dt = expand_t(dt, xt)
+
+            xt = self.fm_scheduler.step(xt, v, dt)
 
             ######################
 
