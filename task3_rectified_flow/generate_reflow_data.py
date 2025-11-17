@@ -73,8 +73,8 @@ def main(args):
 
         # Sample class labels if using CFG
         if args.use_cfg:
-            # Sample labels from 1 to num_classes-1 (skip null class 0)
-            labels = torch.randint(1, num_classes, (B,)).to(device)
+            # Sample labels from 1 to num_classes (skip null class 0)
+            labels = torch.randint(1, num_classes+1, (B,)).to(device)
         else:
             labels = None
 
@@ -82,8 +82,12 @@ def main(args):
         # TODO: Complete this section
         # Use fm.sample() or manually implement the ODE integration
         # to generate z_1 from x_0
-
-        z_1 = x_0  # Replace this with actual generation
+        if args.use_cfg:
+            trajs = fm.sample(shape, num_inference_timesteps=args.num_inference_steps, return_traj=True, class_label=labels, guidance_scale=args.cfg_scale)
+        else:
+            trajs = fm.sample(shape, num_inference_timesteps=args.num_inference_steps, return_traj=True)
+        x_0 = trajs[0]
+        z_1 = trajs[-1]
 
         ######################
 

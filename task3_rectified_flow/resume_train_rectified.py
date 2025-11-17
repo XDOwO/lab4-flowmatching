@@ -1,14 +1,12 @@
 """
-Training Script for Rectified Flow (Task 3)
+Resume Training Script for Rectified Flow (Task 3)
 
-Trains a rectified flow model on synthetic (x_0, z_1) pairs generated from a pretrained
-Flow Matching model. The model learns straighter trajectories, enabling faster sampling.
+Resumes training a rectified flow model from a saved checkpoint.
 
 Usage:
-    python task3_rectified_flow/train_rectified.py \
-        --reflow_data_path data/afhq_reflow \
-        --use_cfg \
-        --reflow_iteration 1
+    python task3_rectified_flow/resume_train_rectified.py \
+        --resume_from_ckpt <path_to_checkpoint> \
+        --gpu <gpu_id>
 """
 
 import argparse
@@ -44,32 +42,29 @@ def get_current_time():
 
 def main(args):
     """config"""
-    config = DotMap()
+    # Load config from the checkpoint's directory to ensure consistency
+    ckpt_path = Path(args.resume_from_ckpt)
+    save_dir = ckpt_path.parent
+    config_path = save_dir / "config.json"
+
+    with open(config_path, "r") as f:
+        config = DotMap(json.load(f))
+    
+    # Update config with any new command-line args, like GPU
     config.update(vars(args))
     config.device = f"cuda:{args.gpu}"
 
-    now = get_current_time()
-    assert args.use_cfg, "In this assignment, we train with CFG setup only."
-
-    # Create save directory with reflow iteration number
-    if args.use_cfg:
-        save_dir = Path(f"results/rectified_fm_{args.reflow_iteration}-{now}")
-    else:
-        save_dir = Path(f"results/rectified_fm_{args.reflow_iteration}_uncond-{now}")
-    save_dir.mkdir(exist_ok=True, parents=True)
-    print(f"save_dir: {save_dir}")
+    print(f"Resuming training. Checkpoints will be saved in: {save_dir}")
 
     seed_everything(config.seed)
 
-    with open(save_dir / "config.json", "w") as f:
-        json.dump(config, f, indent=2)
     """######"""
 
     # Load reflow dataset
-    print(f"Loading reflow dataset from {args.reflow_data_path}")
+    print(f"Loading reflow dataset from {config.reflow_data_path}")
     reflow_dataset = ReflowDataset(
-        args.reflow_data_path,
-        use_cfg=args.use_cfg
+        config.reflow_data_path,
+        use_cfg=config.use_cfg
     )
 
     train_dl = torch.utils.data.DataLoader(
@@ -86,11 +81,11 @@ def main(args):
     num_classes = reflow_dataset.metadata.get("num_classes", None)
 
     print(f"Image resolution: {image_resolution}")
-    if args.use_cfg:
+    if config.use_cfg:
         print(f"Number of classes: {num_classes}")
 
     # Set up the scheduler (same as base FM)
-    fm_scheduler = FMScheduler(sigma_min=args.sigma_min)
+    fm_scheduler = FMScheduler(sigma_min=config.sigma_min)
 
     # Initialize network (same architecture as base FM)
     network = UNet(
@@ -100,8 +95,8 @@ def main(args):
         attn=[1],
         num_res_blocks=4,
         dropout=0.1,
-        use_cfg=args.use_cfg,
-        cfg_dropout=args.cfg_dropout,
+        use_cfg=config.use_cfg,
+        cfg_dropout=config.cfg_dropout,
         num_classes=num_classes,
     )
 
@@ -116,8 +111,43 @@ def main(args):
 
     step = 0
     losses = []
-    print(f"Starting training for {config.train_num_steps} steps...")
-    print(f"This is {args.reflow_iteration}-rectified flow training")
+    
+    print(f"Resuming training from checkpoint: {args.resume_from_ckpt}")
+    ckpt_data = torch.load(args.resume_from_ckpt, map_location=config.device)
+
+    # Check for different checkpoint formats
+    if "state_dict" in ckpt_data:
+        fm.load_state_dict(ckpt_data["state_dict"])
+    else:
+        # Handle older checkpoints that only saved the model
+        fm.load_state_dict(ckpt_data)
+        print("Warning: This appears to be an old checkpoint format. Only model weights are loaded.")
+
+    # Load optimizer state if it exists
+    if "optimizer_state_dict" in ckpt_data:
+        optimizer.load_state_dict(ckpt_data["optimizer_state_dict"])
+    else:
+        print("Warning: Optimizer state not found in checkpoint. Optimizer will be re-initialized.")
+
+    # Load step count if it exists
+    if "step" in ckpt_data:
+        step = ckpt_data["step"]
+    else:
+        print("Warning: Step count not found in checkpoint. Starting from step 0.")
+
+    # Override start step if provided
+    if args.start_step is not None:
+        step = args.start_step
+        print(f"Overriding start step to {step}.")
+
+    # Manually advance the scheduler to the correct step
+    for _ in range(step):
+        scheduler.step()
+    
+    print(f"Resumed from step {step}.")
+
+    print(f"Continuing training up to {config.train_num_steps} steps...")
+    print(f"This is {config.reflow_iteration}-rectified flow training")
 
     with tqdm(initial=step, total=config.train_num_steps) as pbar:
         while step < config.train_num_steps:
@@ -130,7 +160,7 @@ def main(args):
 
                 # Generate sample images
                 shape = (4, 3, fm.image_resolution, fm.image_resolution)
-                if args.use_cfg:
+                if config.use_cfg:
                     class_label = torch.tensor([1, 1, 2, 3]).to(config.device)
                     samples = fm.sample(
                         shape,
@@ -146,12 +176,16 @@ def main(args):
                 for i, img in enumerate(pil_images):
                     img.save(save_dir / f"step={step}-{i}.png")
 
-                # Save checkpoint
-                fm.save(f"{save_dir}/last.ckpt")
+                # Save checkpoint with optimizer and step
+                torch.save({
+                    'step': step,
+                    'state_dict': fm.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, f"{save_dir}/last.ckpt")
                 fm.train()
 
             # Load batch from reflow dataset
-            if args.use_cfg:
+            if config.use_cfg:
                 x_0, z_1, label = next(train_it)
                 x_0, z_1, label = x_0.to(config.device), z_1.to(config.device), label.to(config.device)
             else:
@@ -159,16 +193,7 @@ def main(args):
                 x_0, z_1 = x_0.to(config.device), z_1.to(config.device)
                 label = None
 
-            # Rectified flow training:
-            # For reflow, we train on synthetic pairs (Z_0^(k-1), Z_1^(k-1)) from the 
-            # previous rectified flow, but use the SAME CFM loss as the base flow.
-            #
-            # The loss is: E[||v_θ(x_t, t) - (x_1 - x_0)||²]
-            # where x_t = (1-t)*x_0 + t*x_1
-            #
-            # Here: x_0 (from dataset) = Z_0^(k-1), z_1 (from dataset) = Z_1^(k-1)
-
-            if args.use_cfg:
+            if config.use_cfg:
                 loss = fm.get_loss(z_1, class_label=label, x0=x_0)
             else:
                 loss = fm.get_loss(z_1, x0=x_0)
@@ -189,22 +214,9 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Rectified Flow model")
-    parser.add_argument("--gpu", type=int, default=0)
-    parser.add_argument("--reflow_data_path", type=str, required=True, help="Path to reflow dataset")
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument(
-        "--train_num_steps",
-        type=int,
-        default=100000,
-        help="Number of training steps (same as base FM)",
-    )
-    parser.add_argument("--warmup_steps", type=int, default=1000)
-    parser.add_argument("--log_interval", type=int, default=200)
-    parser.add_argument("--sigma_min", type=float, default=0.001)
-    parser.add_argument("--seed", type=int, default=63)
-    parser.add_argument("--use_cfg", action="store_true")
-    parser.add_argument("--cfg_dropout", type=float, default=0.1)
-    parser.add_argument("--reflow_iteration", type=int, default=1, help="Reflow iteration number (1, 2, ...)")
+    parser = argparse.ArgumentParser(description="Resume Rectified Flow model training")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID to use for resumed training.")
+    parser.add_argument("--resume_from_ckpt", type=str, required=True, help="Path to the checkpoint to resume from.")
+    parser.add_argument("--start_step", type=int, default=None, help="Optional: Override the starting step number.")
     args = parser.parse_args()
     main(args)

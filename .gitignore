@@ -2,3 +2,7 @@ results/
 sample_images/
 data/
 .vscode/
+__pycache__/
+*.pyc
+*.sh
+*.ckpt

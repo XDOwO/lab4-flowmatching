@@ -76,7 +76,7 @@ def main(args):
     fm = FlowMatching(network, fm_scheduler)
     fm = fm.to(config.device)
 
-    optimizer = torch.optim.Adam(fm.network.parameters(), lr=2e-4)
+    optimizer = torch.optim.Adam(fm.network.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lr_lambda=lambda t: min((t + 1) / config.warmup_steps, 1.0)
     )

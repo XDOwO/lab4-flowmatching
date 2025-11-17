@@ -75,7 +75,7 @@ class FMScheduler(nn.Module):
         #   vt: predicted velocity (the direction to move)
         #   dt: time step size
         
-        x_next = xt + dt * vt  # Implement the Euler step
+        x_next = xt + dt * vt 
         ######################
 
         return x_next
@@ -134,13 +134,13 @@ class FlowMatching(nn.Module):
         xt = self.fm_scheduler.compute_psi_t(x1, t, x0)
 
         if class_label is not None:
-            model_out = self.network(xt, t, class_label=class_label)
+            v = self.network(xt, t, class_label=class_label)
         else:
-            model_out = self.network(xt, t)
+            v = self.network(xt, t)
 
-        target = x1 - x0
+        mu = x1 - x0
 
-        loss = F.mse_loss(model_out, target)
+        loss = F.mse_loss(v, mu)
         ######################
 
         return loss
